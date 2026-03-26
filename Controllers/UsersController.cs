@@ -1,0 +1,96 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
+using RestaurantAPI.DTO;
+using RestaurantAPI.Models;
+
+
+namespace RestaurantAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class UsersController : ControllerBase
+    {
+        private readonly UserManager<AppUser> _userManager;
+        private readonly SignInManager<AppUser> _signInManager;
+        private IConfiguration _configuration;
+
+        public UsersController(UserManager<AppUser>userManager,SignInManager<AppUser> singInManager,IConfiguration configuration)
+        {
+            _userManager = userManager;
+            _signInManager = singInManager;
+            _configuration = configuration;
+        }
+  
+        [HttpPost("register")]
+        public async Task<IActionResult>CreatedUser(UserDTO model)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var user = new AppUser
+            {
+                FullName = model.FullName,
+                UserName = model.Username,
+                Email = model.Email,
+                DateAdded = DateTime.UtcNow                
+            };
+            
+            var result = await _userManager.CreateAsync(user,model.Password);
+            if(result.Succeeded)
+            {
+                return StatusCode(201);
+            }
+
+            return BadRequest(result.Errors.Select(x => x.Description));
+        }
+
+        [HttpPost("login")]  
+        public async Task<IActionResult>Login(LoginDTO model)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var user = await _userManager.FindByEmailAsync(model.Email);
+            if(user == null)
+            {
+                return BadRequest(new {message = "Email hatalı"});
+            }
+            
+            var result = await _signInManager.CheckPasswordSignInAsync(user,model.Password,false);
+            if (result.Succeeded)
+            {
+                return Ok(
+                     new {token = GenerateJWT(user)}
+                    );
+            }
+
+            return Unauthorized();
+        }
+
+        private object GenerateJWT(AppUser user)
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.ASCII.GetBytes(_configuration.GetSection("AppSettings:Secret").Value ?? "");
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(
+                    new Claim[] {
+                       new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),
+                       new Claim(ClaimTypes.NameIdentifier,user.UserName ?? "")
+                    }
+                ),
+                Expires = DateTime.UtcNow.AddMinutes(30),
+                SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key),SecurityAlgorithms.HmacSha256Signature),
+                Issuer = "muhammetyetimcok"
+            };
+            var token = tokenHandler.CreateToken(tokenDescriptor);
+            return tokenHandler.WriteToken(token);
+        }
+    }
+}
